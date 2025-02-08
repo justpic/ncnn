@@ -145,7 +145,7 @@ static void qsort_descent_inplace(std::vector<Object>& objects)
     qsort_descent_inplace(objects, 0, objects.size() - 1);
 }
 
-static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold)
+static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vector<int>& picked, float nms_threshold, bool agnostic = false)
 {
     picked.clear();
 
@@ -166,6 +166,9 @@ static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vecto
         {
             const Object& b = faceobjects[picked[j]];
 
+            if (!agnostic && a.label != b.label)
+                continue;
+
             // intersection over union
             float inter_area = intersection_area(a, b);
             float union_area = areas[i] + areas[picked[j]] - inter_area;
@@ -179,15 +182,16 @@ static void nms_sorted_bboxes(const std::vector<Object>& faceobjects, std::vecto
     }
 }
 
-static void generate_grids_and_stride(const int target_size, std::vector<int>& strides, std::vector<GridAndStride>& grid_strides)
+static void generate_grids_and_stride(const int target_w, const int target_h, std::vector<int>& strides, std::vector<GridAndStride>& grid_strides)
 {
     for (int i = 0; i < (int)strides.size(); i++)
     {
         int stride = strides[i];
-        int num_grid = target_size / stride;
-        for (int g1 = 0; g1 < num_grid; g1++)
+        int num_grid_w = target_w / stride;
+        int num_grid_h = target_h / stride;
+        for (int g1 = 0; g1 < num_grid_h; g1++)
         {
-            for (int g0 = 0; g0 < num_grid; g0++)
+            for (int g0 = 0; g0 < num_grid_w; g0++)
             {
                 GridAndStride gs;
                 gs.grid0 = g0;
@@ -257,9 +261,13 @@ static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
     yolox.register_custom_layer("YoloV5Focus", YoloV5Focus_layer_creator);
 
     // original pretrained model from https://github.com/Megvii-BaseDetection/YOLOX
-    // ncnn model param: https://github.com/Megvii-BaseDetection/storage/releases/download/0.0.1/yolox_s_ncnn.tar.gz
-    yolox.load_param("yolox.param");
-    yolox.load_model("yolox.bin");
+    // ncnn model param: https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s_ncnn.tar.gz
+    // NOTE that newest version YOLOX remove normalization of model (minus mean and then div by std),
+    // which might cause your model outputs becoming a total mess, plz check carefully.
+    if (yolox.load_param("yolox.param"))
+        exit(-1);
+    if (yolox.load_model("yolox.bin"))
+        exit(-1);
 
     int img_w = bgr.cols;
     int img_h = bgr.rows;
@@ -279,22 +287,15 @@ static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
         h = YOLOX_TARGET_SIZE;
         w = w * scale;
     }
-    ncnn::Mat in = ncnn::Mat::from_pixels_resize(bgr.data, ncnn::Mat::PIXEL_BGR2RGB, img_w, img_h, w, h);
+    ncnn::Mat in = ncnn::Mat::from_pixels_resize(bgr.data, ncnn::Mat::PIXEL_BGR, img_w, img_h, w, h);
 
     // pad to YOLOX_TARGET_SIZE rectangle
-    int wpad = YOLOX_TARGET_SIZE - w;
-    int hpad = YOLOX_TARGET_SIZE - h;
+    int wpad = (w + 31) / 32 * 32 - w;
+    int hpad = (h + 31) / 32 * 32 - h;
     ncnn::Mat in_pad;
     // different from yolov5, yolox only pad on bottom and right side,
     // which means users don't need to extra padding info to decode boxes coordinate.
     ncnn::copy_make_border(in, in_pad, 0, hpad, 0, wpad, ncnn::BORDER_CONSTANT, 114.f);
-
-    // python 0-1 input tensor with rgb_means = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)
-    // so for 0-255 input image, rgb_mean should multiply 255 and norm should div by std.
-    const float mean_vals[3] = {255.f * 0.485f, 255.f * 0.456, 255.f * 0.406f};
-    const float norm_vals[3] = {1 / (255.f * 0.229f), 1 / (255.f * 0.224f), 1 / (255.f * 0.225f)};
-
-    in_pad.substract_mean_normalize(mean_vals, norm_vals);
 
     ncnn::Extractor ex = yolox.create_extractor();
 
@@ -309,7 +310,7 @@ static int detect_yolox(const cv::Mat& bgr, std::vector<Object>& objects)
         static const int stride_arr[] = {8, 16, 32}; // might have stride=64 in YOLOX
         std::vector<int> strides(stride_arr, stride_arr + sizeof(stride_arr) / sizeof(stride_arr[0]));
         std::vector<GridAndStride> grid_strides;
-        generate_grids_and_stride(YOLOX_TARGET_SIZE, strides, grid_strides);
+        generate_grids_and_stride(in_pad.w, in_pad.h, strides, grid_strides);
         generate_yolox_proposals(grid_strides, out, YOLOX_CONF_THRESH, proposals);
     }
 

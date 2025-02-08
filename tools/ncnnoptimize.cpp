@@ -1290,7 +1290,7 @@ int NetOptimize::fuse_convolution_activation()
         size_t j = i + 1;
         for (; j < layer_count; j++)
         {
-            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid" && layers[j]->type != "Mish")
+            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid" && layers[j]->type != "Mish" && layers[j]->type != "HardSwish")
                 continue;
 
             if (layers[j]->bottoms.size() != 1)
@@ -1340,6 +1340,15 @@ int NetOptimize::fuse_convolution_activation()
         else if (activation->type == "Mish")
         {
             convolution->activation_type = 5;
+        }
+        else if (activation->type == "HardSwish")
+        {
+            ncnn::HardSwish* hardswish = (ncnn::HardSwish*)activation;
+
+            convolution->activation_type = 6;
+            convolution->activation_params = ncnn::Mat(2);
+            convolution->activation_params[0] = hardswish->alpha;
+            convolution->activation_params[1] = hardswish->beta;
         }
 
         int top_blob_index_final = activation->tops[0];
@@ -1434,7 +1443,7 @@ int NetOptimize::fuse_convolutiondepthwise_activation()
         size_t j = i + 1;
         for (; j < layer_count; j++)
         {
-            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid" && layers[j]->type != "Mish")
+            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid" && layers[j]->type != "Mish" && layers[j]->type != "HardSwish")
                 continue;
 
             if (layers[j]->bottoms.size() != 1)
@@ -1484,6 +1493,15 @@ int NetOptimize::fuse_convolutiondepthwise_activation()
         else if (activation->type == "Mish")
         {
             convolutiondepthwise->activation_type = 5;
+        }
+        else if (activation->type == "HardSwish")
+        {
+            ncnn::HardSwish* hardswish = (ncnn::HardSwish*)activation;
+
+            convolutiondepthwise->activation_type = 6;
+            convolutiondepthwise->activation_params = ncnn::Mat(2);
+            convolutiondepthwise->activation_params[0] = hardswish->alpha;
+            convolutiondepthwise->activation_params[1] = hardswish->beta;
         }
 
         int top_blob_index_final = activation->tops[0];
@@ -1651,7 +1669,7 @@ int NetOptimize::fuse_innerproduct_activation()
         size_t j = i + 1;
         for (; j < layer_count; j++)
         {
-            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid")
+            if (layers[j]->type != "ReLU" && layers[j]->type != "Clip" && layers[j]->type != "Sigmoid" && layers[j]->type != "Mish" && layers[j]->type != "HardSwish")
                 continue;
 
             if (layers[j]->bottoms.size() != 1)
@@ -1697,6 +1715,19 @@ int NetOptimize::fuse_innerproduct_activation()
         else if (activation->type == "Sigmoid")
         {
             innerproduct->activation_type = 4;
+        }
+        else if (activation->type == "Mish")
+        {
+            innerproduct->activation_type = 5;
+        }
+        else if (activation->type == "HardSwish")
+        {
+            ncnn::HardSwish* hardswish = (ncnn::HardSwish*)activation;
+
+            innerproduct->activation_type = 6;
+            innerproduct->activation_params = ncnn::Mat(2);
+            innerproduct->activation_params[0] = hardswish->alpha;
+            innerproduct->activation_params[1] = hardswish->beta;
         }
 
         int top_blob_index_final = activation->tops[0];
@@ -1962,7 +1993,7 @@ int NetOptimize::fuse_binaryop_eltwise()
 
         fprintf(stderr, "fuse_binaryop_eltwise %s %s %s\n", binaryop0->name.c_str(), binaryop1->name.c_str(), binaryop->name.c_str());
 
-        ncnn::Eltwise* eltwise = (ncnn::Eltwise*)ncnn::create_layer("Eltwise");
+        ncnn::Eltwise* eltwise = (ncnn::Eltwise*)ncnn::create_layer_cpu("Eltwise");
 
         eltwise->type = "Eltwise";
         eltwise->name = binaryop->name;
@@ -2523,7 +2554,7 @@ int NetOptimize::replace_reduction_with_global_pooling()
 
         fprintf(stderr, "replace_reduction_with_global_pooling %s %s\n", reduction1->name.c_str(), reduction2->name.c_str());
 
-        ncnn::Pooling* pooling = (ncnn::Pooling*)ncnn::create_layer("Pooling");
+        ncnn::Pooling* pooling = (ncnn::Pooling*)ncnn::create_layer_cpu("Pooling");
 
         pooling->type = "Pooling";
         pooling->name = reduction2->name;
@@ -2562,7 +2593,7 @@ int NetOptimize::replace_prelu_with_leaky_relu()
 
         fprintf(stderr, "replace_prelu_with_leaky_relu %s\n", prelu->name.c_str());
 
-        ncnn::ReLU* relu = (ncnn::ReLU*)ncnn::create_layer("ReLU");
+        ncnn::ReLU* relu = (ncnn::ReLU*)ncnn::create_layer_cpu("ReLU");
 
         relu->type = "ReLU";
         relu->name = prelu->name;
@@ -2616,7 +2647,7 @@ int NetOptimize::replace_convolution_with_innerproduct_after_global_pooling()
 
         fprintf(stderr, "replace_convolution_with_innerproduct_after_global_pooling %s %s\n", pooling->name.c_str(), convolution->name.c_str());
 
-        ncnn::InnerProduct* innerproduct = (ncnn::InnerProduct*)ncnn::create_layer("InnerProduct");
+        ncnn::InnerProduct* innerproduct = (ncnn::InnerProduct*)ncnn::create_layer_cpu("InnerProduct");
 
         innerproduct->type = "InnerProduct";
         innerproduct->name = convolution->name;
@@ -2684,7 +2715,7 @@ int NetOptimize::replace_convolution_with_innerproduct_after_innerproduct()
 
             fprintf(stderr, "replace_convolution_with_innerproduct_after_innerproduct %s %s\n", innerproduct->name.c_str(), convolution->name.c_str());
 
-            ncnn::InnerProduct* innerproduct2 = (ncnn::InnerProduct*)ncnn::create_layer("InnerProduct");
+            ncnn::InnerProduct* innerproduct2 = (ncnn::InnerProduct*)ncnn::create_layer_cpu("InnerProduct");
 
             innerproduct2->type = "InnerProduct";
             innerproduct2->name = convolution->name;
